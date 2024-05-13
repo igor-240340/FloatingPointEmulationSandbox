@@ -176,6 +176,9 @@ static F_UINT round_pack_sf(uint32_t a_sign, int a_exp, F_UINT a_mant,
         *pfflags |= FFLAG_INEXACT;
     a_mant = (a_mant + addend) >> RND_SIZE;
     /* half way: select even result */
+    // ME: Мы в любом случае прибавляем.
+    // ME: Если после этого там единица, значит значение было четным, занулние даёт просто отбрасывание.
+    // ME: Если после этого там ноль, значит значение было не четным, а зануление не изменит результата.
     if (rm == RM_RNE && rnd_bits == (1 << (RND_SIZE - 1)))
         a_mant &= ~1;
     /* Note the rounding adds at least 1, so this is the maximum
