@@ -249,15 +249,19 @@ static inline F_UINT normalize_subnormal_sf(int32_t *pa_exp, F_UINT a_mant)
 }
 
 F_UINT div_sf(F_UINT a, F_UINT b, RoundingModeEnum rm, uint32_t *pfflags);
+F_UINT mul_sf(F_UINT a, F_UINT b, RoundingModeEnum rm, uint32_t *pfflags);
+
 // End SoftFP
 
 void test_add();
 void test_div();
+void test_mul();
 
 int main()
 {
     // test_add();
-    test_div();
+    // test_div();
+    test_mul();
 
     return 0;
 }
@@ -266,10 +270,84 @@ int main()
  * Floating-Point multiplication.
  *
  * В clang вычисляется точное произведение (в двойной разрядной сетке) и затем выполняется корректное округление до одинарной точности.
- * В SoftFloat тоже вычисляется произведение в двойной сетке, но округление происходит по принципу отличному (по крайней мере внешне) от clang.
+ * В SoftFloat тоже вычисляется произведение в двойной сетке, но округление происходит по принципу отличному (по крайней мере при беглом взгляде) от clang.
+ * В SoftFP - тоже в двойной.
+ * У меня получилось собственное решение, в исходной разрядной сетке, с округлением каждого частичного произведения (по схеме со стики-битом).
  *
- * У меня получилось собственное решение, в исходной разрядной сетке (по схеме со стики-битом), поэтому здесь я не разбирал ни одну из сишных реализаций.
+ * Ниже приведён пример из SoftFP.
  */
+ void test_mul()
+{
+    uint32_t fflags = 0;
+
+    F_UINT a, b;
+    F_UINT res;
+
+    a = 0x3fa00000; // 1.25f.
+    b = 0x3fccccce; // 1.600000178813934326171875f.
+    res = mul_sf(a, b, RM_RNE, &fflags);
+    assert(res == 0x40000001);
+}
+
+ static F_UINT mul_u(F_UINT *plow, F_UINT a, F_UINT b)
+{
+    F_ULONG r;
+    r = (F_ULONG)a * (F_ULONG)b;
+    *plow = r;
+    return r >> F_SIZE;
+}
+
+ F_UINT mul_sf(F_UINT a, F_UINT b, RoundingModeEnum rm,
+              uint32_t *pfflags)
+{
+    uint32_t a_sign, b_sign, r_sign;
+    int32_t a_exp, b_exp, r_exp;
+    F_UINT a_mant, b_mant, r_mant, r_mant_low;
+
+    a_sign = a >> (F_SIZE - 1);
+    b_sign = b >> (F_SIZE - 1);
+    r_sign = a_sign ^ b_sign;
+    a_exp = (a >> MANT_SIZE) & EXP_MASK;
+    b_exp = (b >> MANT_SIZE) & EXP_MASK;
+    a_mant = a & MANT_MASK;
+    b_mant = b & MANT_MASK;
+    if (a_exp == EXP_MASK || b_exp == EXP_MASK) {
+        if (isnan_sf(a) || isnan_sf(b)) {
+            if (issignan_sf(a) || issignan_sf(b)) {
+                *pfflags |= FFLAG_INVALID_OP;
+            }
+            return F_QNAN;
+        } else {
+            /* infinity */
+            if ((a_exp == EXP_MASK && (b_exp == 0 && b_mant == 0)) ||
+                (b_exp == EXP_MASK && (a_exp == 0 && a_mant == 0))) {
+                *pfflags |= FFLAG_INVALID_OP;
+                return F_QNAN;
+            } else {
+                return pack_sf(r_sign, EXP_MASK, 0);
+            }
+        }
+    }
+    if (a_exp == 0) {
+        if (a_mant == 0)
+            return pack_sf(r_sign, 0, 0); /* zero */
+        a_mant = normalize_subnormal_sf(&a_exp, a_mant);
+    } else {
+        a_mant |= (F_UINT)1 << MANT_SIZE;
+    }
+    if (b_exp == 0) {
+        if (b_mant == 0)
+            return pack_sf(r_sign, 0, 0); /* zero */
+        b_mant = normalize_subnormal_sf(&b_exp, b_mant);
+    } else {
+        b_mant |= (F_UINT)1 << MANT_SIZE;
+    }
+    r_exp = a_exp + b_exp - (1 << (EXP_SIZE - 1)) + 2;
+
+    r_mant = mul_u(&r_mant_low,a_mant << RND_SIZE, b_mant << (RND_SIZE + 1));
+    r_mant |= (r_mant_low != 0);
+    return normalize_sf(r_sign, r_exp, r_mant, rm, pfflags);
+}
 
 /**
  * Floating-Point division (SoftFP).
