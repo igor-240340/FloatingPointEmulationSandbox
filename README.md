@@ -1,2 +1,2 @@
 ﻿# Floating Point Emulation Sandbox
-Здесь мы экспериментируем с разными программными эмуляциями плавающей точки на десктопе (x86-64), написанными на С.
+Experiments with different software emulations of floating-point arithmetic on desktop (x86-64) written in C language.
